@@ -1,57 +1,23 @@
-import { Worker } from "worker_threads";
-import { IRunnable, IRunnableOption, IUnwrappedResult } from "../../interfaces";
+import {
+  IResponse,
+  IRunnable,
+  IRunnableOption,
+  IUnwrappedResult,
+} from "../interfaces";
 
-// function createParallelFunction<P extends Array<unknown>, R>(
-//   runnable: IRunnable<P, R>,
-//   options: IRunnableOption = {},
-// ) {
-//   return function (...params: P) {
-//     const script = `
-// 		const {
-// 			parentPort
-// 		} = require("node:worker_threads");
-// 		${runnable.toString()}
-// 		parentPort.on("message",(data)=>{
-// 			const result = ${runnable.name}.apply(null,data);
-// 			parentPort.postMessage(result);
-// 			parentPort.close();
-// 		});
-// 		`;
-//     return new Promise<R>((resolve, reject) => {
-//       const { signal, startTime = 0, timeout } = options;
-//       const worker = new Worker(script, { eval: true });
-//       signal?.addEventListener(
-//         "abort",
-//         (_) => {
-//           _;
-//           worker.terminate();
-//         },
-//         { once: true },
-//       );
-//       let startTimer: NodeJS.Timeout | undefined;
-//       let timeoutTimer: NodeJS.Timeout | undefined;
-//       if (startTime) {
-//         startTimer = setTimeout(() => worker.postMessage(params), startTime);
-//       } else {
-//         worker.postMessage(params);
-//       }
-//       startTimer;
-//       if (timeout) {
-//         timeoutTimer = setTimeout(() => {
-//           worker.terminate();
-//           clearTimeout(startTimer);
-//         }, timeout);
-//       }
-//       worker.on("message", (data) => {
-//         resolve(data);
-//         clearTimeout(startTimer);
-//         clearTimeout(timeoutTimer);
-//       });
-//       worker.on("error", reject);
-//       worker.on("exit", reject);
-//     });
-//   };
-// }
+export { IRunnable, IRunnableOption, IUnwrappedResult };
+/**
+ * Represents a custom event indicating the exit status of a process.
+ */
+export class ExitEvent extends CustomEvent<{ code: number }> {
+  /**
+   * Creates an instance of ExitEvent with the specified exit code.
+   * @param {number} code - The exit code indicating the status of the process.
+   */
+  constructor(code: number) {
+    super("exit", { detail: { code } });
+  }
+}
 
 /**
  * Creates a Web Worker with the provided runnable function and options.
@@ -68,18 +34,24 @@ export function createWorker<P extends Array<unknown>, R>(
   params: P,
 ) {
   const script = `
-		const {
-			parentPort
-		} = require("node:worker_threads");
+        const parentPort=self;
 		${runnable.toString()}
-		parentPort.on("message",async (data)=>{
-			const result = await ${runnable.name}.apply(null,data);
-			parentPort.postMessage(result);
-			parentPort.close();
-		});
+		parentPort.onmessage = async ({data})=>{
+            try {
+                const content = await ${runnable.name}.apply(null,data);
+                parentPort.postMessage({type: "success",content});
+            }
+            catch(error) {
+                parentPort.postMessage({type: "error",error});
+            }
+            finally {
+                parentPort.close();
+            }
+        };
 		`;
+  const blob = new Blob([script], { type: "text/javascript" });
   const { signal, startTime = 0, timeout } = options;
-  const worker = new Worker(script, { eval: true });
+  const worker = new Worker(window.URL.createObjectURL(blob));
   signal?.addEventListener(
     "abort",
     (_) => {
@@ -88,26 +60,25 @@ export function createWorker<P extends Array<unknown>, R>(
     },
     { once: true },
   );
-  let startTimer: NodeJS.Timeout | undefined;
-  let timeoutTimer: NodeJS.Timeout | undefined;
+  let startTimer: number | undefined;
+  let timeoutTimer: number | undefined;
   if (startTime) {
-    startTimer = setTimeout(() => worker.postMessage(params), startTime);
+    startTimer = window.setTimeout(() => worker.postMessage(params), startTime);
   } else {
     worker.postMessage(params);
   }
   if (timeout) {
-    timeoutTimer = setTimeout(() => {
+    timeoutTimer = window.setTimeout(() => {
       worker.terminate();
       clearTimeout(startTimer);
     }, timeout);
   }
-  worker.on("message", (_) => {
+  worker.addEventListener("message", (_) => {
     _;
     clearTimeout(timeoutTimer);
     clearTimeout(startTimer);
   });
-  // worker.on("error", reject);
-  // worker.on("exit", reject);
+
   return worker;
 }
 
@@ -149,9 +120,38 @@ export function createPool<P extends Array<unknown>, R>(
       }
       function tryExecution() {
         const worker = createWorker(runnable, options, params);
-        worker.on("message", resolve);
-        worker.on("error", (error) => (errorInstance = error));
-        worker.on("exit", exitHandler);
+
+        worker.addEventListener(
+          "message",
+          ({ data }: { data: IResponse<R> }) => {
+            if (data.type === "success") {
+              resolve(data.content as IUnwrappedResult<R>);
+              worker.dispatchEvent(new ExitEvent(0));
+            } else {
+              errorInstance = data.error;
+              worker.dispatchEvent(new ExitEvent(1));
+            }
+          },
+          { once: true },
+        );
+        worker.addEventListener(
+          "error",
+          (errorEvent) => {
+            errorInstance = errorEvent.error;
+            worker.dispatchEvent(new ExitEvent(1));
+          },
+          { once: true },
+        );
+
+        worker.addEventListener(
+          "exit",
+          (event) => {
+            if (event instanceof ExitEvent) {
+              exitHandler(event.detail.code);
+            }
+          },
+          { once: true },
+        );
       }
       tryExecution();
     });

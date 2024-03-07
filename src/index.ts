@@ -5,6 +5,4 @@ export {
   IUnwrappedResult,
 } from "./interfaces";
 
-import { createPool, createWorker } from "./lib";
-export { createWorker };
-export default createPool;
+export { createPool, createWorker } from "./browser";
