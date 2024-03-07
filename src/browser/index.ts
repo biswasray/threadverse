@@ -157,3 +157,5 @@ export function createPool<P extends Array<unknown>, R>(
     });
   };
 }
+
+export default { createPool, createWorker, ExitEvent };

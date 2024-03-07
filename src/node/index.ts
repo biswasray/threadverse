@@ -2,6 +2,19 @@ import { Worker } from "worker_threads";
 import { IRunnable, IRunnableOption, IUnwrappedResult } from "../interfaces";
 
 export { IRunnable, IRunnableOption, IUnwrappedResult };
+
+/**
+ * Represents a custom event indicating the exit status of a process.
+ */
+export class ExitEvent extends CustomEvent<{ code: number }> {
+  /**
+   * Creates an instance of ExitEvent with the specified exit code.
+   * @param {number} code - The exit code indicating the status of the process.
+   */
+  constructor(code: number) {
+    super("exit", { detail: { code } });
+  }
+}
 // function createParallelFunction<P extends Array<unknown>, R>(
 //   runnable: IRunnable<P, R>,
 //   options: IRunnableOption = {},
@@ -158,3 +171,5 @@ export function createPool<P extends Array<unknown>, R>(
     });
   };
 }
+
+export default { createPool, createWorker };
